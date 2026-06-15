@@ -8,6 +8,7 @@ The app accepts a JSON array of communications, analyzes the complete batch toge
 
 ```bash
 npm install
+# Create the only local env file you need from the committed template.
 cp .env.example .env.local
 # set OPENAI_API_KEY in .env.local
 npm run dev
@@ -26,7 +27,7 @@ AOS_THREADED_ANALYSIS_MIN_MESSAGES=30
 AOS_THREAD_ANALYSIS_CONCURRENCY=3
 ```
 
-`OPENAI_API_KEY` is used only in the server route. If it is missing, `POST /api/analyze` returns a clear `503` configuration error and the UI shows that a server-side key is required.
+Only `.env.local` needs real local values; `.env.example` is the committed reference template. `OPENAI_API_KEY` is used only in the server route. If it is missing, `POST /api/analyze` returns a clear `503` configuration error and the UI shows that a server-side key is required.
 
 Large batches automatically switch from one-shot analysis to a threaded pipeline at `AOS_THREADED_ANALYSIS_MIN_MESSAGES` messages. The threaded path first builds a full-batch thread plan, then analyzes bounded thread slices with `AOS_THREAD_ANALYSIS_CONCURRENCY` parallel calls before merging back into the same audit-ready schema.
 
