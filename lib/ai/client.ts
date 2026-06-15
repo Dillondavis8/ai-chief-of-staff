@@ -3,7 +3,7 @@ import { zodResponseFormat } from "openai/helpers/zod";
 import type { z } from "zod";
 
 const DEFAULT_MODEL = "gpt-4.1-mini";
-const MODEL_TIMEOUT_MS = 45_000;
+const MODEL_TIMEOUT_MS = 120_000;
 
 export class MissingAIConfigurationError extends Error {
   constructor() {
@@ -60,6 +60,7 @@ export async function parseStructuredChatCompletion<TSchema extends z.ZodTypeAny
     const completion = await client.beta.chat.completions.parse({
       model: getModelName(),
       temperature: 0.1,
+      max_tokens: 16_000,
       response_format: zodResponseFormat(args.schema, args.schemaName),
       messages: [
         {
@@ -72,6 +73,10 @@ export async function parseStructuredChatCompletion<TSchema extends z.ZodTypeAny
         }
       ]
     });
+
+    if (completion.choices[0]?.finish_reason === "length") {
+      throw new ModelOutputError("The model response ended before completing the structured output.");
+    }
 
     const parsed = completion.choices[0]?.message.parsed;
     if (!parsed) {

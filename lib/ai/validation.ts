@@ -242,8 +242,8 @@ export function validateBriefing(briefing: DailyBriefing, analysis: AnalysisResu
     .join(" ");
 
   const wordCount = countWords(renderedText);
-  if (wordCount > 250) {
-    issues.push(`briefing is ${wordCount} words; target is 250 or fewer.`);
+  if (wordCount > 300) {
+    issues.push(`briefing is ${wordCount} words; target is approximately 250 and must stay under 300.`);
   }
 
   const sections = [

@@ -1,8 +1,8 @@
 # AI Chief of Staff
 
-Human-in-the-loop demo that turns a mixed email, Slack, and WhatsApp morning inbox into a current-state executive brief.
+Human-in-the-loop demo that turns a mixed email, Slack, and WhatsApp morning inbox into a current-state executive workflow.
 
-The app accepts a JSON array of communications, analyzes the complete batch together with an LLM, resolves evolving threads, classifies every original message, drafts responses or handoffs, flags important risks, and renders a daily briefing with source traceability. It does not send messages or assign work.
+The app accepts a JSON array of communications, analyzes the complete batch together with an LLM, resolves evolving threads, classifies every original message, drafts responses or handoffs, flags important risks, and renders a concise daily briefing with source traceability. A separate local workflow layer lets the CEO record decisions, intended delegations, acknowledgements, waiting states, completions, and dismissals. It does not send messages or assign work.
 
 ## Quick Start
 
@@ -26,7 +26,55 @@ OPENAI_MODEL=gpt-4.1-mini
 
 `OPENAI_API_KEY` is used only in the server route. If it is missing, `POST /api/analyze` returns a clear `503` configuration error and the UI shows that a server-side key is required.
 
-## Workflow
+## From Analysis Report To Workflow
+
+The first version answered “what did the AI find?” This version adds the operational loop: “what needs attention, what has been handled, and what remains unfinished?”
+
+1. The AI layer resolves the latest current state from the full communication batch.
+2. The workflow layer derives canonical actions from that analysis.
+3. The CEO opens an action, inspects evidence and missing context, records a decision or handoff, acknowledges a flag, or dismisses the item.
+4. Morning progress and active counts update immediately.
+5. Original messages, model lifecycle state, rationale, and drafts remain unchanged in the Audit Trail.
+
+## Two Types Of State
+
+Immutable AI analysis state:
+
+- Message classification: `ignore`, `delegate`, `decide`
+- Lifecycle: `active`, `superseded`, `resolved`, `informational`
+- Threads, executive items, flags, rationales, source IDs, and model drafts
+
+Mutable local workflow state:
+
+- Workflow status: `open`, `in_progress`, `waiting`, `completed`, `dismissed`
+- Recorded decision, selected option, owner, notes, edited draft, and timestamps
+- Stored by deterministic action keys derived from stable source IDs and action title
+
+Completing an action never changes the AI lifecycle. For example, an AI-active decision can have workflow status `completed`.
+
+## Saved Analysis Runs
+
+Successful analyses are stored locally in the browser so a demo can survive refreshes and a reviewer can switch between prior runs.
+
+- The latest saved run restores automatically on refresh.
+- The Dataset panel includes a `Saved run` dropdown.
+- Uploading a new JSON file creates a new working dataset without deleting previous runs.
+- Clicking Analyze stores that dataset, analysis result, briefing, metadata, and timestamp.
+- Saved runs are capped locally to keep browser storage bounded.
+
+This supports a realistic CEO pattern: each morning can be reviewed as its own run, while unresolved workflow items remain locally available by stable action key. In production, prior-day carryover would be synthesized with new communications through durable user-scoped persistence and an explicit historical context retrieval layer.
+
+## Navigation
+
+The app uses URL-driven views so browser back/forward and metric-card links are useful without losing the current analysis:
+
+- `Briefing`: concise daily briefing, morning progress, upcoming deadlines, and critical flags
+- `Action Center`: canonical operational queue with filters, search, sorting, workflow controls, and detail drawer
+- `Audit Trail`: original messages and thread timelines with AI category, lifecycle, rationale, drafts, flags, and source links
+
+Metric cards navigate directly into filtered views, such as active decisions, delegations, flags, and superseded/resolved audit records.
+
+## Analysis Pipeline
 
 1. Load the default sample dataset or upload a new `.json` file.
 2. Client-side validation checks array shape, unique IDs, parseable timestamps, sender/body presence, payload size, and unknown channel normalization.
@@ -36,6 +84,53 @@ OPENAI_MODEL=gpt-4.1-mini
 6. If validation fails, the server makes one repair call and validates again.
 7. A second structured-output call creates the daily briefing from validated current-state analysis only.
 8. If the briefing stays over 250 words after one rewrite, a deterministic fallback preserves source IDs.
+
+## Workflow Behavior
+
+Decision actions:
+
+- Open the detail drawer with the decision question, current state, grounded options, tradeoffs, missing context, draft, thread timeline, and original messages.
+- Record one of the model-returned options, request more information, or write a different decision.
+- Move the item to `in_progress` or `waiting`, then later mark complete or reopen.
+
+Delegation actions:
+
+- Confirm or edit the suggested owner.
+- Edit the internal handoff draft.
+- Mark the item delegated, which moves it to `waiting`.
+- The UI explicitly states that nobody is notified.
+
+Flag actions:
+
+- Flags attach to linked canonical actions when possible, so the phishing issue is one security delegation with an attached critical flag rather than several duplicate tasks.
+- Standalone flags can be acknowledged or dismissed.
+- Acknowledging a flag does not automatically complete a linked decision or delegation.
+
+Drafts:
+
+- Initial draft text comes from the AI output.
+- Edits persist locally.
+- `Reset to AI draft` restores the original model draft.
+- There is no Send button.
+
+## Demo Persistence
+
+Workflow updates are stored in browser `localStorage` under a versioned key:
+
+```text
+ai-chief-of-staff:workflow:v1
+```
+
+Saved analysis runs are stored separately under:
+
+```text
+ai-chief-of-staff:analysis-runs:v1
+ai-chief-of-staff:selected-run:v1
+```
+
+Malformed stored JSON is ignored safely. Stale workflow states are filtered by current deterministic action keys, so unrelated uploaded datasets do not show old action state. A visible `Reset workflow` action clears local workflow updates for another demo.
+
+No messages are sent, no assignees are notified, and no external communication APIs are called.
 
 ## Demo Assumptions
 
@@ -60,7 +155,7 @@ Accepted messages may look like:
 
 Known channels are `email`, `slack`, and `whatsapp`. Unknown channels are normalized to `other` when required fields are present.
 
-The analysis schema is defined in [lib/ai/schemas.ts](lib/ai/schemas.ts). The UI distinguishes historical per-message classifications, current thread state, and deduplicated active executive items.
+The analysis schema is defined in [lib/ai/schemas.ts](lib/ai/schemas.ts). Workflow types, action keys, selectors, and persistence helpers live under [lib/workflow](lib/workflow).
 
 ## Scripts
 
@@ -107,13 +202,35 @@ Success:
 }
 ```
 
-Errors use sanitized statuses: `400` malformed input, `413` excessive payload, `503` missing server configuration, `502` invalid model output after repair, and `500` unexpected server error.
+Errors use sanitized statuses: `400` malformed input, `413` excessive payload, `503` missing server configuration/provider quota or key issues, `502` invalid model output after repair or provider failure, and `500` unexpected server error.
+
+## Demo Script
+
+1. Open Briefing.
+2. Show morning progress.
+3. Click the Active CEO Decisions metric.
+4. Open the API incident.
+5. Inspect the thread timeline.
+6. Record a decision without sending anything.
+7. Show the queue and progress update.
+8. Open the Security delegation.
+9. Edit the handoff and mark it delegated.
+10. Show it moving to Waiting.
+11. Open the Audit Trail.
+12. Show the original AI analysis remained unchanged.
+13. Reset workflow for another demo.
+
+## Production Path
+
+A production deployment would add durable user-scoped persistence, user identity, RBAC, multi-user collaboration, approval gates, audit events, workflow notifications, and real integrations for email, Slack, WhatsApp, ticketing, and task systems. Outbound actions would still require explicit human approval.
 
 ## Engineering Notes
 
 - App Router, TypeScript, Tailwind CSS, Zod, and the official OpenAI TypeScript SDK.
 - The model never receives one message at a time; the full normalized batch is analyzed together.
 - Message content is treated as untrusted data in the prompt and never rendered as arbitrary HTML.
-- Metrics are derived in application code, not trusted from model totals.
-- Source badges link briefing items, executive cards, flags, threads, and audit records back to original message IDs.
+- Metrics are derived from canonical workflow selectors, not trusted from model totals.
+- Source badges link briefing items, action cards, flags, threads, and audit records back to original message IDs.
+- Local workflow state is separate from immutable AI analysis state.
+- URL query parameters drive top-level views and filters.
 - No authentication, database, background jobs, or external channel integrations are included in this vertical slice.

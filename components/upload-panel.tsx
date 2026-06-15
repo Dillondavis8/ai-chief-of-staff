@@ -2,11 +2,15 @@
 
 import { FileJson, RefreshCw, Upload, Wand2 } from "lucide-react";
 import type { FieldValidationError, MessageValidationResult } from "@/lib/messages/schemas";
+import type { StoredAnalysisRun } from "@/lib/runs/storage";
 
 type UploadPanelProps = {
   filename: string;
   validation: MessageValidationResult;
   isAnalyzing: boolean;
+  savedRuns: StoredAnalysisRun[];
+  selectedRunId: string | null;
+  onSelectRun: (runId: string) => void;
   onAnalyze: () => void;
   onReset: () => void;
   onFile: (file: File) => void;
@@ -34,6 +38,9 @@ export function UploadPanel({
   filename,
   validation,
   isAnalyzing,
+  savedRuns,
+  selectedRunId,
+  onSelectRun,
   onAnalyze,
   onReset,
   onFile
@@ -50,7 +57,24 @@ export function UploadPanel({
             {filename} · {validation.ok ? validation.messages.length : 0} valid messages
           </p>
         </div>
-        <div className="flex flex-wrap gap-2">
+        <div className="flex flex-wrap items-center gap-2">
+          {savedRuns.length > 0 ? (
+            <label className="inline-flex min-h-10 items-center gap-2 rounded-md border border-line bg-white px-3 py-2 text-sm font-semibold text-ink">
+              <span className="text-stone-600">Saved run</span>
+              <select
+                value={selectedRunId ?? ""}
+                onChange={(event) => onSelectRun(event.target.value)}
+                className="max-w-[260px] bg-transparent text-sm font-semibold text-ink outline-none"
+                aria-label="Select saved analysis run"
+              >
+                {savedRuns.map((run) => (
+                  <option key={run.id} value={run.id}>
+                    {run.label}
+                  </option>
+                ))}
+              </select>
+            </label>
+          ) : null}
           <button
             type="button"
             onClick={onReset}

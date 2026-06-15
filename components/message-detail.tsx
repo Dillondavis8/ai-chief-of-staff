@@ -1,4 +1,5 @@
 import type { MessageAnalysis } from "@/lib/ai/schemas";
+import { messageElementId } from "@/lib/messages/source-links";
 import type { NormalizedMessage } from "@/lib/messages/schemas";
 import { ChannelBadge } from "./channel-badge";
 import { CategoryBadge, LifecycleBadge } from "./status-badge";
@@ -12,7 +13,7 @@ export function MessageDetail({
   analysis?: MessageAnalysis;
 }) {
   return (
-    <article id={`message-${message.id}`} className="scroll-mt-6 rounded-lg border border-line bg-white p-4">
+    <article id={messageElementId(message.id)} className="scroll-mt-6 rounded-lg border border-line bg-white p-4">
       <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
         <div>
           <div className="flex flex-wrap items-center gap-2">

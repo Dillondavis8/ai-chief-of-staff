@@ -98,16 +98,26 @@ Requirements:
 13. Return only data conforming to the supplied briefing schema.`;
 
 export function buildAnalysisUserPrompt(messages: NormalizedMessage[], sourceDate: string) {
+  const requiredIds = messages.map((message) => message.id);
+
   return `Analyze these normalized communications as one chronological batch.
 
 Source date: ${sourceDate}
+Message count: ${messages.length}
+Required message IDs, in chronological order: ${requiredIds.join(", ")}
 
 Demo company context:
 ${JSON.stringify(demoCompanyContext, null, 2)}
 
 Return sourceDate exactly as "${sourceDate}".
 
-Create stable, readable IDs for threads, action items, executive items, and flags. Use source message IDs everywhere they apply. For every input message ID, include exactly one messageAnalyses entry.
+Create stable, readable IDs for threads, action items, executive items, and flags. Use source message IDs everywhere they apply.
+
+Critical completeness requirement:
+- messageAnalyses must contain exactly ${messages.length} entries.
+- Include exactly one messageAnalyses entry for every required message ID listed above.
+- Do not return a sample, subset, summary, or abbreviated analysis.
+- Even ignored, informational, superseded, and resolved messages require a complete messageAnalyses entry with rationale and draftedResponse.
 
 All schema fields must be present. Use null for unavailable optional details such as ownerRole, decisionRequired, deadlineText, deadlineAt, response recipient, subject, threadId, options, recommendedNextStep, draftedResponse, recommendedAction, or overview.
 

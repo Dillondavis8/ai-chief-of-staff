@@ -2,6 +2,7 @@
 
 import { ClipboardCopy } from "lucide-react";
 import type { BriefingItem, DailyBriefing as DailyBriefingType } from "@/lib/ai/schemas";
+import { briefingDisplayText, splitBriefingBody } from "@/lib/ai/briefing-display";
 import { briefingWordCount } from "@/lib/ai/briefing";
 import { PriorityBadge } from "./status-badge";
 import { SourceBadges } from "./source-badges";
@@ -22,13 +23,16 @@ const sections: Array<{
 ];
 
 function BriefingRow({ item }: { item: BriefingItem }) {
+  const title = briefingDisplayText(item.title);
+  const { body } = splitBriefingBody(item.body);
+
   return (
     <li className="rounded-md border border-line bg-white p-3">
       <div className="flex flex-wrap items-center gap-2">
         <PriorityBadge value={item.priority} />
-        <h4 className="font-semibold text-ink">{item.title}</h4>
+        <h4 className="font-semibold text-ink">{title}</h4>
       </div>
-      <p className="mt-2 text-sm leading-6 text-stone-700">{item.body}</p>
+      {body ? <p className="mt-2 text-sm leading-6 text-stone-700">{body}</p> : null}
       <div className="mt-3">
         <SourceBadges ids={item.sourceMessageIds} />
       </div>
@@ -38,17 +42,26 @@ function BriefingRow({ item }: { item: BriefingItem }) {
 
 export function DailyBriefing({ briefing }: DailyBriefingProps) {
   const wordCount = briefingWordCount(briefing);
+  const title = briefingDisplayText(briefing.title);
+  const overview = briefingDisplayText(briefing.overview);
 
   const copyText = [
-    briefing.title,
-    briefing.overview,
+    title,
+    overview,
     ...sections.flatMap((section) => {
       const items = briefing[section.key];
       if (items.length === 0) {
         return [];
       }
 
-      return [section.label, ...items.map((item) => `- ${item.title}: ${item.body} (${item.sourceMessageIds.map((id) => `#${id}`).join(", ")})`)];
+      return [
+        section.label,
+        ...items.map((item) => {
+          const { body } = splitBriefingBody(item.body);
+          const mainText = body ? `${briefingDisplayText(item.title)}: ${body}` : briefingDisplayText(item.title);
+          return `- ${mainText} (${item.sourceMessageIds.map((id) => `#${id}`).join(", ")})`;
+        })
+      ];
     })
   ]
     .filter(Boolean)
@@ -59,8 +72,8 @@ export function DailyBriefing({ briefing }: DailyBriefingProps) {
       <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
         <div>
           <p className="text-xs font-semibold uppercase text-stone-500">Daily briefing</p>
-          <h2 className="mt-1 text-2xl font-semibold text-ink">{briefing.title}</h2>
-          {briefing.overview ? <p className="mt-2 text-sm leading-6 text-stone-600">{briefing.overview}</p> : null}
+          <h2 className="mt-1 text-2xl font-semibold text-ink">{title}</h2>
+          {overview ? <p className="mt-2 text-sm leading-6 text-stone-600">{overview}</p> : null}
         </div>
         <div className="flex flex-wrap items-center gap-2">
           <span className="rounded-full border border-line bg-paper px-3 py-1 text-xs font-semibold text-stone-700">
