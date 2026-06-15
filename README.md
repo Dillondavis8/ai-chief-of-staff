@@ -20,16 +20,23 @@ The supplied fixture is normalized into [data/messages.json](data/messages.json)
 
 ## Environment
 
+Required in `.env.local`:
+
 ```bash
 OPENAI_API_KEY=sk-your-server-side-key
+```
+
+Optional overrides, already shown in `.env.example` with defaults:
+
+```bash
 OPENAI_MODEL=gpt-5.4-mini
 AOS_THREADED_ANALYSIS_MIN_MESSAGES=30
 AOS_THREAD_ANALYSIS_CONCURRENCY=3
 ```
 
-Only `.env.local` needs real local values; `.env.example` is the committed reference template. `OPENAI_API_KEY` is used only in the server route. If it is missing, `POST /api/analyze` returns a clear `503` configuration error and the UI shows that a server-side key is required.
+Only `.env.local` needs real local values; `.env.example` is the committed reference template. `OPENAI_API_KEY` is the only required value and is used only in the server route. If it is missing, `POST /api/analyze` returns a clear `503` configuration error and the UI shows that a server-side key is required.
 
-Large batches automatically switch from one-shot analysis to a threaded pipeline at `AOS_THREADED_ANALYSIS_MIN_MESSAGES` messages. The threaded path first builds a full-batch thread plan, then analyzes bounded thread slices with `AOS_THREAD_ANALYSIS_CONCURRENCY` parallel calls before merging back into the same audit-ready schema.
+`OPENAI_MODEL` defaults to the model shown above when omitted. Large batches automatically switch from one-shot analysis to a threaded pipeline at `AOS_THREADED_ANALYSIS_MIN_MESSAGES` messages, defaulting to `30`. The threaded path first builds a full-batch thread plan, then analyzes bounded thread slices with `AOS_THREAD_ANALYSIS_CONCURRENCY` parallel calls, defaulting to `3`, before merging back into the same audit-ready schema.
 
 ## From Analysis Report To Workflow
 
