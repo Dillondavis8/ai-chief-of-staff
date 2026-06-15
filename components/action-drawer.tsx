@@ -156,6 +156,11 @@ function ActionDrawerContent({
     );
   }
 
+  function markCurrentComplete() {
+    updateWorkflow((current) => markStatus(current, currentAction.key, "completed"));
+    onClose();
+  }
+
   return (
     <div className="fixed inset-0 z-50" role="dialog" aria-modal="true" aria-labelledby="action-drawer-title">
       <button type="button" className="absolute inset-0 cursor-default bg-ink/35" aria-label="Close action details" onClick={onClose} />
@@ -286,7 +291,7 @@ function ActionDrawerContent({
               <button type="button" onClick={() => updateWorkflow((current) => markStatus(current, action.key, "waiting"))} className="min-h-9 rounded-md border border-line bg-white px-3 py-2 text-sm font-semibold text-ink">
                 Move to waiting
               </button>
-              <button type="button" onClick={() => updateWorkflow((current) => markStatus(current, action.key, "completed"))} className="min-h-9 rounded-md border border-line bg-white px-3 py-2 text-sm font-semibold text-ink">
+              <button type="button" onClick={markCurrentComplete} className="min-h-9 rounded-md border border-line bg-white px-3 py-2 text-sm font-semibold text-ink">
                 Mark complete
               </button>
               <button type="button" onClick={() => updateWorkflow((current) => markStatus(current, action.key, "open"))} className="min-h-9 rounded-md border border-line bg-white px-3 py-2 text-sm font-semibold text-ink">

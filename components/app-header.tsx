@@ -12,12 +12,9 @@ export function AppHeader() {
               Demo mode
             </span>
           </div>
-          <p className="mt-2 max-w-2xl text-sm text-stone-600">
-            Turn a noisy morning inbox into an executive decision brief.
-          </p>
         </div>
         <div className="max-w-xl rounded-md border border-line bg-paper px-4 py-3 text-sm font-medium text-ink">
-          Recommendations and drafts only. Nothing is sent or assigned automatically.
+          Turn a noisy morning inbox into an executive decision brief.
         </div>
       </div>
     </header>

@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { Settings2, Trash2 } from "lucide-react";
+import { Trash2 } from "lucide-react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { AppHeader } from "./app-header";
 import { UploadPanel } from "./upload-panel";
@@ -15,12 +15,12 @@ import { ActionCenter } from "./action-center";
 import { AuditTrailView } from "./audit-trail-view";
 import { ActionDrawer } from "./action-drawer";
 import { normalizeMessages } from "@/lib/messages/normalize";
-import { demoCompanyContext } from "@/lib/demo/company-context";
 import type { AnalysisResponseMetadata, AnalysisResult, DailyBriefing as DailyBriefingType } from "@/lib/ai/schemas";
 import { useWorkflowState } from "@/lib/workflow/use-workflow-state";
 import {
   getActionsWithWorkflow,
   getCanonicalActions,
+  getCriticalFlagHighlights,
   getMetricCounts,
   getMorningProgress,
   getUpcomingDeadlines,
@@ -105,6 +105,40 @@ function parseView(value: string | null): ViewName {
   return "briefing";
 }
 
+function formatAnalysisMode(metadata: AnalysisResponseMetadata) {
+  if (metadata.analysisMode === "threaded") {
+    const threadCount = metadata.plannedThreadCount ?? 0;
+    return `${threadCount} planned thread${threadCount === 1 ? "" : "s"}`;
+  }
+
+  if (metadata.analysisMode === "deterministic") {
+    return "deterministic";
+  }
+
+  return "single pass";
+}
+
+function compactStatusText(value: string, maxLength = 140) {
+  const normalized = value.replace(/\s+/g, " ").trim();
+  return normalized.length <= maxLength ? normalized : `${normalized.slice(0, maxLength - 3).trimEnd()}...`;
+}
+
+function fallbackStatus(metadata: AnalysisResponseMetadata) {
+  if (metadata.usedAnalysisFallback) {
+    return metadata.analysisFallbackReason
+      ? `deterministic analysis fallback used (${compactStatusText(metadata.analysisFallbackReason)})`
+      : "deterministic analysis fallback used";
+  }
+
+  if (metadata.partialAnalysisFallbackCount > 0) {
+    return `${metadata.partialAnalysisFallbackCount} thread fallback${
+      metadata.partialAnalysisFallbackCount === 1 ? "" : "s"
+    } used`;
+  }
+
+  return null;
+}
+
 function replaceParams(params: URLSearchParams, patch: Record<string, string | null>) {
   const next = new URLSearchParams(params.toString());
   Object.entries(patch).forEach(([key, value]) => {
@@ -149,11 +183,7 @@ export function Dashboard({ initialMessages }: DashboardProps) {
       : null;
   const selectedAction = actions.find((action) => action.key === searchParams.get("action")) ?? null;
   const deadlines = getUpcomingDeadlines(actions);
-  const criticalFlags = actions.filter(
-    (action) =>
-      !isHandledWorkflowStatus(action.workflow.status) &&
-      action.flags.some((flag) => flag.severity === "critical" || flag.severity === "high")
-  );
+  const criticalFlags = getCriticalFlagHighlights(actions);
 
   /* eslint-disable react-hooks/set-state-in-effect */
   useEffect(() => {
@@ -383,34 +413,25 @@ export function Dashboard({ initialMessages }: DashboardProps) {
           onFile={handleFile}
         />
 
-        <details className="rounded-lg border border-line bg-white px-5 py-4">
-          <summary className="flex cursor-pointer items-center gap-2 text-sm font-semibold text-ink">
-            <Settings2 className="h-4 w-4 text-mint" aria-hidden="true" />
-            Demo assumptions
-          </summary>
-          <div className="mt-3 grid gap-4 text-sm text-stone-700 lg:grid-cols-3">
-            <div>
-              <p className="font-semibold text-ink">Executive preferences</p>
-              <ul className="mt-2 list-inside list-disc space-y-1">
-                {demoCompanyContext.executivePreferences.map((preference) => (
-                  <li key={preference}>{preference}</li>
-                ))}
-              </ul>
-            </div>
-            <div>
-              <p className="font-semibold text-ink">Decision policy</p>
-              <ul className="mt-2 list-inside list-disc space-y-1">
-                {demoCompanyContext.decisionPolicy.map((policy) => (
-                  <li key={policy}>{policy}</li>
-                ))}
-              </ul>
-            </div>
-            <div>
-              <p className="font-semibold text-ink">Functional owners</p>
-              <p className="mt-2">{demoCompanyContext.availableFunctionalOwners.join(", ")}</p>
-            </div>
+        {result && validation.ok ? (
+          <div className="flex flex-col gap-3 rounded-lg border border-line bg-white px-4 py-3 text-sm text-stone-600 lg:flex-row lg:items-center lg:justify-between">
+            <span>
+              Model {result.metadata.model} · Prompt {result.metadata.promptVersion} · {result.metadata.processingMs} ms ·{" "}
+              {formatAnalysisMode(result.metadata)} · {result.metadata.modelCallCount} model call
+              {result.metadata.modelCallCount === 1 ? "" : "s"}
+              {fallbackStatus(result.metadata) ? ` · ${fallbackStatus(result.metadata)}` : ""}
+              {result.metadata.usedBriefingFallback ? " · deterministic briefing fallback used" : ""}
+            </span>
+            <button
+              type="button"
+              onClick={resetWorkflowWithConfirmation}
+              className="inline-flex min-h-9 items-center gap-2 self-start rounded-md border border-line bg-white px-3 py-2 text-sm font-semibold text-ink hover:border-stone-400 lg:self-auto"
+            >
+              <Trash2 className="h-4 w-4" aria-hidden="true" />
+              Reset workflow
+            </button>
           </div>
-        </details>
+        ) : null}
 
         {error ? <ErrorState title="Analysis unavailable" message={error} /> : null}
         {isAnalyzing ? <AnalysisProgress elapsedSeconds={elapsedSeconds} /> : null}
@@ -424,20 +445,6 @@ export function Dashboard({ initialMessages }: DashboardProps) {
               onNavigate={navigateView}
             />
             <SummaryMetrics metrics={metrics} onNavigate={navigate} />
-            <div className="flex flex-col gap-3 rounded-lg border border-line bg-white px-4 py-3 text-sm text-stone-600 lg:flex-row lg:items-center lg:justify-between">
-              <span>
-                Model {result.metadata.model} · Prompt {result.metadata.promptVersion} · {result.metadata.processingMs} ms
-                {result.metadata.usedBriefingFallback ? " · deterministic briefing fallback used" : ""}
-              </span>
-              <button
-                type="button"
-                onClick={resetWorkflowWithConfirmation}
-                className="inline-flex min-h-9 items-center gap-2 self-start rounded-md border border-line bg-white px-3 py-2 text-sm font-semibold text-ink hover:border-stone-400 lg:self-auto"
-              >
-                <Trash2 className="h-4 w-4" aria-hidden="true" />
-                Reset workflow
-              </button>
-            </div>
 
             {currentView === "briefing" ? (
               <BriefingWorkspace

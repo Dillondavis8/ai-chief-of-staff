@@ -19,7 +19,7 @@ describe("ranking utilities", () => {
       messageAnalyses: [
         {
           messageId: "1",
-          primaryCategory: "decide",
+          primaryCategory: "ignore",
           lifecycleStatus: "superseded",
           relatedMessageIds: [],
           supersededBy: ["2"],
@@ -122,7 +122,7 @@ describe("ranking utilities", () => {
       activeDecisions: 1,
       delegatedActions: 1,
       activeFlags: 1,
-      inactiveMessages: 1
+      ignoredMessages: 1
     });
   });
 });

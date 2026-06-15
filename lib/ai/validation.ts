@@ -180,6 +180,9 @@ export function validateAnalysisResult(
     if (isActive && item.kind === "decide" && !item.decisionQuestion?.trim()) {
       issues.push(`active decide executive item ${item.id} needs a decisionQuestion.`);
     }
+    if (isActive && (item.kind === "decide" || item.kind === "delegate") && !item.draftedResponse?.body.trim()) {
+      issues.push(`active ${item.kind} executive item ${item.id} needs a drafted response body.`);
+    }
 
     const sourceText = item.sourceMessageIds
       .map((id) => {

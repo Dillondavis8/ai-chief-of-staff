@@ -3,6 +3,7 @@ import type { AnalysisResult, DailyBriefing } from "@/lib/ai/schemas";
 import {
   MAX_STORED_RUNS,
   createStoredRun,
+  formatRunFilename,
   parseRunHistory,
   selectRun,
   serializeRunHistory,
@@ -29,9 +30,16 @@ const briefing: DailyBriefing = {
 
 const metadata = {
   model: "test-model",
-  promptVersion: "aos-v1",
+  promptVersion: "aos-v4",
   processedMessageCount: 1,
   processingMs: 100,
+  analysisMode: "single_pass" as const,
+  modelCallCount: 1,
+  plannedThreadCount: null,
+  partialAnalysisFallbackCount: 0,
+  analysisFallbackReason: null,
+  analysisWarnings: [],
+  usedAnalysisFallback: false,
   usedBriefingFallback: false
 };
 
@@ -47,6 +55,11 @@ function run(index: number) {
 }
 
 describe("run history storage", () => {
+  it("formats messy uploaded filenames for display", () => {
+    expect(formatRunFilename("Messages JSON (1) (1).json")).toBe("Messages JSON");
+    expect(formatRunFilename("board-update_export-copy.json")).toBe("Board Update Export");
+  });
+
   it("round-trips stored runs and ignores malformed JSON", () => {
     const stored = serializeRunHistory([run(1)]);
 

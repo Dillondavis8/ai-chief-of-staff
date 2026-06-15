@@ -1,24 +1,22 @@
 import { normalizeMessages } from "@/lib/messages/normalize";
 import type { FieldValidationError, MessageValidationResult, NormalizedMessage } from "@/lib/messages/schemas";
 import {
-  analysisResultSchema,
-  dailyBriefingSchema,
   type AnalysisResponseMetadata,
   type AnalysisResult,
   type DailyBriefing
 } from "./schemas";
 import {
   ANALYSIS_SYSTEM_PROMPT,
-  BRIEFING_SYSTEM_PROMPT,
   PROMPT_VERSION,
   buildAnalysisUserPrompt,
-  buildBriefingUserPrompt,
-  buildConciseBriefingPrompt,
   buildRepairUserPrompt
 } from "./prompts";
-import { getModelName, ModelOutputError, parseStructuredChatCompletion } from "./client";
-import { buildFallbackBriefing } from "./briefing";
-import { validateAnalysisResult, validateBriefing } from "./validation";
+import { AIProviderError, getModelName, ModelOutputError, parseStructuredChatCompletion } from "./client";
+import { buildDailyBriefing } from "./briefing";
+import { buildCompactAnalysisSchema, expandCompactAnalysis } from "./compact-analysis";
+import { buildFallbackAnalysis } from "./fallback-analysis";
+import { requestThreadedAnalysis, shouldUseThreadedAnalysis } from "./threaded-analysis";
+import { validateAnalysisResult } from "./validation";
 
 export class InputValidationError extends Error {
   status: 400 | 413;
@@ -35,68 +33,63 @@ export class InputValidationError extends Error {
 type AnalysisAttemptResult = {
   analysis: AnalysisResult;
   validationIssues: string[];
+  modelCallCount: number;
+  analysisMode: AnalysisResponseMetadata["analysisMode"];
+  plannedThreadCount: number | null;
+  partialAnalysisFallbackCount: number;
+  fallbackReasons: string[];
+  analysisWarnings: string[];
 };
 
-async function requestAnalysis(messages: NormalizedMessage[], sourceDate: string): Promise<AnalysisAttemptResult> {
-  const analysis = await parseStructuredChatCompletion({
-    schema: analysisResultSchema,
-    schemaName: "aos_analysis_result",
-    systemPrompt: ANALYSIS_SYSTEM_PROMPT,
-    userPrompt: buildAnalysisUserPrompt(messages, sourceDate)
-  });
-
-  const validation = validateAnalysisResult(analysis, messages, sourceDate);
-  return { analysis, validationIssues: validation.issues };
-}
-
-async function repairAnalysis(args: {
-  messages: NormalizedMessage[];
-  sourceDate: string;
-  invalidResult: AnalysisResult;
-  validationIssues: string[];
-}) {
-  const repaired = await parseStructuredChatCompletion({
-    schema: analysisResultSchema,
-    schemaName: "aos_analysis_result_repaired",
-    systemPrompt: ANALYSIS_SYSTEM_PROMPT,
-    userPrompt: buildRepairUserPrompt(args)
-  });
-
-  const validation = validateAnalysisResult(repaired, args.messages, args.sourceDate);
-  return { analysis: repaired, validationIssues: validation.issues };
-}
-
-async function requestBriefing(analysis: AnalysisResult): Promise<{
-  briefing: DailyBriefing;
-  usedFallback: boolean;
-}> {
-  const briefing = await parseStructuredChatCompletion({
-    schema: dailyBriefingSchema,
-    schemaName: "aos_daily_briefing",
-    systemPrompt: BRIEFING_SYSTEM_PROMPT,
-    userPrompt: buildBriefingUserPrompt(analysis)
-  });
-
-  const validation = validateBriefing(briefing, analysis);
-  if (validation.valid) {
-    return { briefing, usedFallback: false };
+function summarizeAnalysisError(error: AIProviderError | ModelOutputError) {
+  if (error instanceof AIProviderError) {
+    const status = error.status ? ` status ${error.status}` : "";
+    const code = error.code ? ` code ${error.code}` : "";
+    return `${error.name}${status}${code}: ${error.message}`;
   }
 
-  const concise = await parseStructuredChatCompletion({
-    schema: dailyBriefingSchema,
-    schemaName: "aos_daily_briefing_concise",
-    systemPrompt: BRIEFING_SYSTEM_PROMPT,
-    userPrompt: buildConciseBriefingPrompt(analysis)
-  });
+  return `${error.name}: ${error.message}`;
+}
 
-  const conciseValidation = validateBriefing(concise, analysis);
-  if (conciseValidation.valid) {
-    return { briefing: concise, usedFallback: false };
+async function requestSinglePassAnalysis(messages: NormalizedMessage[], sourceDate: string): Promise<AnalysisAttemptResult> {
+  let modelCallCount = 1;
+  const compact = await parseStructuredChatCompletion({
+    schema: buildCompactAnalysisSchema(messages.map((message) => message.id)),
+    schemaName: "aos_analysis_result",
+    systemPrompt: ANALYSIS_SYSTEM_PROMPT,
+    userPrompt: buildAnalysisUserPrompt(messages, sourceDate),
+    maxTokens: 8_000
+  });
+  let analysis = expandCompactAnalysis(compact, messages, sourceDate);
+
+  let validation = validateAnalysisResult(analysis, messages, sourceDate);
+  if (validation.issues.length > 0) {
+    modelCallCount += 1;
+    const repairedCompact = await parseStructuredChatCompletion({
+      schema: buildCompactAnalysisSchema(messages.map((message) => message.id)),
+      schemaName: "aos_analysis_result_repaired",
+      systemPrompt: ANALYSIS_SYSTEM_PROMPT,
+      userPrompt: buildRepairUserPrompt({
+        messages,
+        sourceDate,
+        invalidResult: analysis,
+        validationIssues: validation.issues
+      }),
+      maxTokens: 8_000
+    });
+    analysis = expandCompactAnalysis(repairedCompact, messages, sourceDate);
+    validation = validateAnalysisResult(analysis, messages, sourceDate);
   }
 
   return {
-    briefing: buildFallbackBriefing(analysis),
-    usedFallback: true
+    analysis,
+    validationIssues: validation.issues,
+    modelCallCount,
+    analysisMode: "single_pass",
+    plannedThreadCount: null,
+    partialAnalysisFallbackCount: 0,
+    fallbackReasons: [],
+    analysisWarnings: []
   };
 }
 
@@ -114,28 +107,59 @@ export async function analyzeCommunications(rawMessages: unknown): Promise<Analy
     throw new InputValidationError(normalized);
   }
 
-  const firstAttempt = await requestAnalysis(normalized.messages, normalized.sourceDate);
-  let analysis = firstAttempt.analysis;
-  let issues = firstAttempt.validationIssues;
+  let usedAnalysisFallback = false;
+  let analysis: AnalysisResult;
+  let issues: string[] = [];
+  let modelCallCount = 0;
+  let analysisMode: AnalysisResponseMetadata["analysisMode"] = "single_pass";
+  let plannedThreadCount: number | null = null;
+  let partialAnalysisFallbackCount = 0;
+  let analysisFallbackReason: string | null = null;
+  let analysisWarnings: string[] = [];
 
-  if (issues.length > 0) {
-    const repaired = await repairAnalysis({
-      messages: normalized.messages,
-      sourceDate: normalized.sourceDate,
-      invalidResult: firstAttempt.analysis,
-      validationIssues: issues
+  try {
+    const attempt = shouldUseThreadedAnalysis(normalized.messages)
+      ? await requestThreadedAnalysis(normalized.messages, normalized.sourceDate)
+      : await requestSinglePassAnalysis(normalized.messages, normalized.sourceDate);
+
+    analysis = attempt.analysis;
+    issues = attempt.validationIssues;
+    modelCallCount = attempt.modelCallCount;
+    analysisMode = attempt.analysisMode;
+    plannedThreadCount = attempt.plannedThreadCount;
+    partialAnalysisFallbackCount = attempt.partialAnalysisFallbackCount;
+    analysisWarnings = attempt.analysisWarnings;
+
+    if (attempt.fallbackReasons.length > 0) {
+      analysisWarnings = [...analysisWarnings, ...attempt.fallbackReasons];
+    }
+
+    if (issues.length > 0) {
+      throw new ModelOutputError(
+        `The model returned analysis that failed validation: ${issues.slice(0, 6).join("; ")}`
+      );
+    }
+  } catch (error) {
+    if (!(error instanceof AIProviderError) && !(error instanceof ModelOutputError)) {
+      throw error;
+    }
+
+    const fallbackReason = summarizeAnalysisError(error);
+    console.warn("[ai] using deterministic analysis fallback", {
+      reason: error.name,
+      message: error.message
     });
-    analysis = repaired.analysis;
-    issues = repaired.validationIssues;
+    analysis = buildFallbackAnalysis(normalized.messages, normalized.sourceDate);
+    usedAnalysisFallback = true;
+    analysisMode = "deterministic";
+    analysisFallbackReason = fallbackReason;
+    partialAnalysisFallbackCount = 0;
+    plannedThreadCount = null;
   }
 
-  if (issues.length > 0) {
-    throw new ModelOutputError(
-      `The model returned analysis that failed validation after repair: ${issues.slice(0, 6).join("; ")}`
-    );
-  }
+  const briefing = buildDailyBriefing(analysis);
+  const usedBriefingFallback = false;
 
-  const { briefing, usedFallback } = await requestBriefing(analysis);
   const processingMs = Math.round(performance.now() - startedAt);
 
   return {
@@ -146,7 +170,14 @@ export async function analyzeCommunications(rawMessages: unknown): Promise<Analy
       promptVersion: PROMPT_VERSION,
       processedMessageCount: normalized.messages.length,
       processingMs,
-      usedBriefingFallback: usedFallback
+      analysisMode,
+      modelCallCount,
+      plannedThreadCount,
+      partialAnalysisFallbackCount,
+      analysisFallbackReason,
+      analysisWarnings,
+      usedAnalysisFallback,
+      usedBriefingFallback
     }
   };
 }

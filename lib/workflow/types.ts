@@ -75,6 +75,13 @@ export type ActionWithWorkflow = CanonicalAction & {
   workflow: ActionWorkflowState;
 };
 
+export type CriticalFlagHighlight = {
+  key: string;
+  actionKey: string;
+  flag: ExecutiveFlag;
+  action: ActionWithWorkflow;
+};
+
 export type ActionFilters = {
   type: "all" | "decide" | "delegate" | "flag";
   status: "all" | "active" | WorkflowStatus;

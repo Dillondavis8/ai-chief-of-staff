@@ -2,6 +2,7 @@
 
 import { FileJson, RefreshCw, Upload, Wand2 } from "lucide-react";
 import type { FieldValidationError, MessageValidationResult } from "@/lib/messages/schemas";
+import { createRunLabel, formatRunFilename } from "@/lib/runs/storage";
 import type { StoredAnalysisRun } from "@/lib/runs/storage";
 
 type UploadPanelProps = {
@@ -45,31 +46,33 @@ export function UploadPanel({
   onReset,
   onFile
 }: UploadPanelProps) {
+  const displayFilename = formatRunFilename(filename);
+
   return (
     <section className="panel rounded-lg p-5">
-      <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
-        <div>
+      <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_auto] lg:items-center">
+        <div className="min-w-0">
           <h2 className="flex items-center gap-2 text-lg font-semibold text-ink">
             <FileJson className="h-5 w-5 text-mint" aria-hidden="true" />
             Dataset
           </h2>
-          <p className="mt-1 text-sm text-stone-600">
-            {filename} · {validation.ok ? validation.messages.length : 0} valid messages
+          <p className="mt-1 truncate text-sm text-stone-600" title={`${filename} · ${validation.ok ? validation.messages.length : 0} valid messages`}>
+            {displayFilename} · {validation.ok ? validation.messages.length : 0} valid messages
           </p>
         </div>
-        <div className="flex flex-wrap items-center gap-2">
+        <div className="flex min-w-0 flex-wrap items-center gap-2 lg:flex-nowrap lg:justify-end">
           {savedRuns.length > 0 ? (
-            <label className="inline-flex min-h-10 items-center gap-2 rounded-md border border-line bg-white px-3 py-2 text-sm font-semibold text-ink">
-              <span className="text-stone-600">Saved run</span>
+            <label className="inline-flex min-h-10 min-w-0 max-w-full items-center gap-2 rounded-md border border-line bg-white px-3 py-2 text-sm font-semibold text-ink sm:w-[320px]">
+              <span className="shrink-0 text-stone-600">Saved run</span>
               <select
                 value={selectedRunId ?? ""}
                 onChange={(event) => onSelectRun(event.target.value)}
-                className="max-w-[260px] bg-transparent text-sm font-semibold text-ink outline-none"
+                className="min-w-0 flex-1 truncate bg-transparent text-sm font-semibold text-ink outline-none"
                 aria-label="Select saved analysis run"
               >
                 {savedRuns.map((run) => (
                   <option key={run.id} value={run.id}>
-                    {run.label}
+                    {createRunLabel(run.filename, run.createdAt, run.messageCount)}
                   </option>
                 ))}
               </select>
@@ -78,12 +81,12 @@ export function UploadPanel({
           <button
             type="button"
             onClick={onReset}
-            className="inline-flex min-h-10 items-center gap-2 rounded-md border border-line bg-white px-3 py-2 text-sm font-semibold text-ink hover:border-stone-400"
+            className="inline-flex min-h-10 shrink-0 items-center gap-2 rounded-md border border-line bg-white px-3 py-2 text-sm font-semibold text-ink hover:border-stone-400"
           >
             <RefreshCw className="h-4 w-4" aria-hidden="true" />
             Reset sample
           </button>
-          <label className="inline-flex min-h-10 cursor-pointer items-center gap-2 rounded-md border border-line bg-white px-3 py-2 text-sm font-semibold text-ink hover:border-stone-400">
+          <label className="inline-flex min-h-10 shrink-0 cursor-pointer items-center gap-2 rounded-md border border-line bg-white px-3 py-2 text-sm font-semibold text-ink hover:border-stone-400">
             <Upload className="h-4 w-4" aria-hidden="true" />
             Select JSON
             <input
@@ -103,7 +106,7 @@ export function UploadPanel({
             type="button"
             onClick={onAnalyze}
             disabled={!validation.ok || isAnalyzing}
-            className="inline-flex min-h-10 items-center gap-2 rounded-md bg-ink px-4 py-2 text-sm font-semibold text-white hover:bg-stone-800 disabled:cursor-not-allowed disabled:bg-stone-300"
+            className="inline-flex min-h-10 shrink-0 items-center gap-2 rounded-md bg-ink px-4 py-2 text-sm font-semibold text-white hover:bg-stone-800 disabled:cursor-not-allowed disabled:bg-stone-300"
           >
             <Wand2 className="h-4 w-4" aria-hidden="true" />
             Analyze

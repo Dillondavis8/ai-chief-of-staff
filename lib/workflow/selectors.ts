@@ -15,6 +15,7 @@ import type {
   ActionWithWorkflow,
   AuditFilters,
   CanonicalAction,
+  CriticalFlagHighlight,
   WorkflowMap,
   WorkflowStatus
 } from "./types";
@@ -34,6 +35,13 @@ const workflowWeight: Record<WorkflowStatus, number> = {
   dismissed: 0
 };
 
+const briefingKindWeight: Record<ActionWithWorkflow["kind"], number> = {
+  decide: 4,
+  flag: 3,
+  delegate: 2,
+  inform: 1
+};
+
 export function isHandledWorkflowStatus(status: WorkflowStatus) {
   return status === "completed" || status === "dismissed";
 }
@@ -45,6 +53,135 @@ export function isUnresolvedWorkflowStatus(status: WorkflowStatus) {
 function sharesSourceIds(left: string[], right: string[]) {
   const rightSet = new Set(right);
   return left.some((id) => rightSet.has(id));
+}
+
+function sourceKey(ids: string[]) {
+  return [...ids].sort().join(",");
+}
+
+function exactSourceMatch(left: string[], right: string[]) {
+  return sourceKey(left) === sourceKey(right);
+}
+
+function isSubset(candidateIds: string[], containerIds: string[]) {
+  const container = new Set(containerIds);
+  return candidateIds.every((id) => container.has(id));
+}
+
+function titleTokens(title: string) {
+  const stopWords = new Set(["and", "or", "the", "a", "an", "to", "for", "with", "on", "of", "in", "update"]);
+  return title
+    .toLowerCase()
+    .replace(/[^a-z0-9\s]/g, " ")
+    .split(/\s+/)
+    .map((token) => (token.length > 3 ? token.replace(/s$/, "") : token))
+    .filter((token) => token.length > 2 && !stopWords.has(token));
+}
+
+function titleOverlap(left: string | null | undefined, right: string | null | undefined) {
+  const leftTokens = new Set(titleTokens(left ?? ""));
+  const rightTokens = new Set(titleTokens(right ?? ""));
+  const smaller = Math.min(leftTokens.size, rightTokens.size);
+  if (smaller === 0) {
+    return 0;
+  }
+
+  let shared = 0;
+  leftTokens.forEach((token) => {
+    if (rightTokens.has(token)) {
+      shared += 1;
+    }
+  });
+
+  return shared / smaller;
+}
+
+function flagIssueKey(flag: ExecutiveFlag) {
+  return `${sourceKey(flag.sourceMessageIds)}:${flag.category}`;
+}
+
+function sameThread(left: CanonicalAction, right: CanonicalAction) {
+  return Boolean(left.thread?.id && right.thread?.id && left.thread.id === right.thread.id);
+}
+
+function actionIssueOverlap(left: CanonicalAction, right: CanonicalAction) {
+  return Math.max(
+    titleOverlap(left.title, right.title),
+    titleOverlap(left.summary, right.summary),
+    titleOverlap(left.decisionQuestion, right.decisionQuestion),
+    titleOverlap(left.recommendedNextStep, right.recommendedNextStep)
+  );
+}
+
+function canonicalActionRank(left: CanonicalAction, right: CanonicalAction) {
+  const sourceDelta = right.sourceMessageIds.length - left.sourceMessageIds.length;
+  if (sourceDelta !== 0) {
+    return sourceDelta;
+  }
+
+  const priorityDelta = priorityWeight[right.priority] - priorityWeight[left.priority];
+  if (priorityDelta !== 0) {
+    return priorityDelta;
+  }
+
+  const kindDelta = briefingKindWeight[right.kind] - briefingKindWeight[left.kind];
+  if (kindDelta !== 0) {
+    return kindDelta;
+  }
+
+  return Number(Boolean(right.deadlineAt || right.deadlineText)) - Number(Boolean(left.deadlineAt || left.deadlineText));
+}
+
+function canonicalActionCoveredBy(candidate: CanonicalAction, keeper: CanonicalAction) {
+  if (candidate.key === keeper.key) {
+    return false;
+  }
+
+  const exactSources = exactSourceMatch(candidate.sourceMessageIds, keeper.sourceMessageIds);
+  const sharedSources = sharesSourceIds(candidate.sourceMessageIds, keeper.sourceMessageIds);
+  const relatedSources = exactSources || sameThread(candidate, keeper) || sharedSources;
+  const issueOverlap = actionIssueOverlap(candidate, keeper);
+
+  if (candidate.kind !== keeper.kind) {
+    return candidate.kind === "delegate" && keeper.kind === "decide" && relatedSources && issueOverlap >= 0.35;
+  }
+
+  if (candidate.kind === "delegate") {
+    const sameOwner = (candidate.ownerRole ?? "").toLowerCase() === (keeper.ownerRole ?? "").toLowerCase();
+    return sameOwner && sharedSources && (exactSources || issueOverlap >= 0.35);
+  }
+
+  if (candidate.kind === "decide") {
+    const candidateCoveredByKeeper = isSubset(candidate.sourceMessageIds, keeper.sourceMessageIds);
+    const keeperHasBroaderSource = keeper.sourceMessageIds.length > candidate.sourceMessageIds.length;
+    return (exactSources || (candidateCoveredByKeeper && keeperHasBroaderSource)) && issueOverlap >= 0.35;
+  }
+
+  return exactSources && issueOverlap >= 0.35;
+}
+
+function dedupeCanonicalActions(actions: CanonicalAction[]) {
+  const kept: CanonicalAction[] = [];
+  const rankedActions = actions
+    .map((action, index) => ({ action, index }))
+    .sort((left, right) => canonicalActionRank(left.action, right.action) || left.index - right.index)
+    .map((entry) => entry.action);
+
+  rankedActions.forEach((action) => {
+    if (kept.some((keeper) => canonicalActionCoveredBy(action, keeper))) {
+      return;
+    }
+
+    for (let index = kept.length - 1; index >= 0; index -= 1) {
+      if (canonicalActionCoveredBy(kept[index], action)) {
+        kept.splice(index, 1);
+      }
+    }
+
+    kept.push(action);
+  });
+
+  return kept;
 }
 
 export function getThreadForItem(item: ExecutiveItem, threads: ThreadAnalysis[]) {
@@ -139,13 +276,13 @@ export function getCanonicalActions(analysis: AnalysisResult): CanonicalAction[]
     });
   });
 
-  return sortCanonicalActions([...byKey.values()].map((action) => ({ ...action, workflow: createDefaultWorkflowState(action.key) }))).map(
-    (actionWithWorkflow) => {
-      const { workflow, ...action } = actionWithWorkflow;
-      void workflow;
-      return action;
-    }
-  );
+  return sortCanonicalActions(
+    dedupeCanonicalActions([...byKey.values()]).map((action) => ({ ...action, workflow: createDefaultWorkflowState(action.key) }))
+  ).map((actionWithWorkflow) => {
+    const { workflow, ...action } = actionWithWorkflow;
+    void workflow;
+    return action;
+  });
 }
 
 export function getActionWithWorkflow(action: CanonicalAction, workflowMap: WorkflowMap): ActionWithWorkflow {
@@ -203,6 +340,47 @@ export function sortCanonicalActions<T extends ActionWithWorkflow>(actions: T[],
 
     return left.title.localeCompare(right.title);
   });
+}
+
+function sortBriefingAttentionActions<T extends ActionWithWorkflow>(actions: T[]) {
+  return [...actions].sort((left, right) => {
+    const priorityDelta = priorityWeight[right.priority] - priorityWeight[left.priority];
+    if (priorityDelta !== 0) {
+      return priorityDelta;
+    }
+
+    const statusDelta = workflowWeight[right.workflow.status] - workflowWeight[left.workflow.status];
+    if (statusDelta !== 0) {
+      return statusDelta;
+    }
+
+    const kindDelta = briefingKindWeight[right.kind] - briefingKindWeight[left.kind];
+    if (kindDelta !== 0) {
+      return kindDelta;
+    }
+
+    if (left.deadlineAt && right.deadlineAt) {
+      return Date.parse(left.deadlineAt) - Date.parse(right.deadlineAt);
+    }
+    if (left.deadlineAt) {
+      return -1;
+    }
+    if (right.deadlineAt) {
+      return 1;
+    }
+
+    return left.title.localeCompare(right.title);
+  });
+}
+
+export function getBriefingActionGroups(actions: ActionWithWorkflow[]) {
+  return {
+    attention: sortBriefingAttentionActions(
+      actions.filter((action) => action.workflow.status !== "waiting" && isUnresolvedWorkflowStatus(action.workflow.status))
+    ),
+    waiting: sortCanonicalActions(actions.filter((action) => action.workflow.status === "waiting")),
+    handled: sortCanonicalActions(actions.filter((action) => isHandledWorkflowStatus(action.workflow.status)), "updated")
+  };
 }
 
 export function filterActions(actions: ActionWithWorkflow[], filters: ActionFilters) {
@@ -287,10 +465,69 @@ export function getMetricCounts(args: {
     activeDecisions: unresolved.filter((action) => action.kind === "decide").length,
     delegatedActions: unresolved.filter((action) => action.kind === "delegate").length,
     activeFlags: unresolved.filter((action) => action.flags.length > 0 || action.kind === "flag").length,
-    inactiveMessages: args.analysis.messageAnalyses.filter((message) =>
-      ["superseded", "resolved"].includes(message.lifecycleStatus)
-    ).length
+    ignoredMessages: args.analysis.messageAnalyses.filter((message) => message.primaryCategory === "ignore").length
   };
+}
+
+export function getCriticalFlagHighlights(actions: ActionWithWorkflow[], limit = 3): CriticalFlagHighlight[] {
+  const highlightsByIssue = new Map<string, CriticalFlagHighlight>();
+  const severityWeight: Record<ExecutiveFlag["severity"], number> = {
+    critical: 4,
+    high: 3,
+    medium: 2,
+    low: 1
+  };
+  const kindWeight: Record<ActionWithWorkflow["kind"], number> = {
+    decide: 4,
+    delegate: 3,
+    flag: 2,
+    inform: 1
+  };
+
+  actions
+    .filter((action) => isUnresolvedWorkflowStatus(action.workflow.status))
+    .forEach((action) => {
+      action.flags
+        .filter((flag) => flag.status === "active" && (flag.severity === "critical" || flag.severity === "high"))
+        .forEach((flag) => {
+          const issueKey = flagIssueKey(flag);
+          const existing = highlightsByIssue.get(issueKey);
+          const candidate: CriticalFlagHighlight = {
+            key: `${issueKey}:${flag.id}`,
+            actionKey: action.key,
+            flag,
+            action
+          };
+
+          if (!existing) {
+            highlightsByIssue.set(issueKey, candidate);
+            return;
+          }
+
+          const severityDelta = severityWeight[flag.severity] - severityWeight[existing.flag.severity];
+          const priorityDelta = priorityWeight[action.priority] - priorityWeight[existing.action.priority];
+          const kindDelta = kindWeight[action.kind] - kindWeight[existing.action.kind];
+          if (severityDelta > 0 || (severityDelta === 0 && (priorityDelta > 0 || (priorityDelta === 0 && kindDelta > 0)))) {
+            highlightsByIssue.set(issueKey, candidate);
+          }
+        });
+    });
+
+  return [...highlightsByIssue.values()]
+    .sort((left, right) => {
+      const severityDelta = severityWeight[right.flag.severity] - severityWeight[left.flag.severity];
+      if (severityDelta !== 0) {
+        return severityDelta;
+      }
+
+      const priorityDelta = priorityWeight[right.action.priority] - priorityWeight[left.action.priority];
+      if (priorityDelta !== 0) {
+        return priorityDelta;
+      }
+
+      return left.flag.title.localeCompare(right.flag.title);
+    })
+    .slice(0, limit);
 }
 
 export function getUpcomingDeadlines(actions: ActionWithWorkflow[], limit = 4) {

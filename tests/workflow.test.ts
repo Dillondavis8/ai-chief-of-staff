@@ -10,7 +10,9 @@ import {
 import {
   filterActions,
   getActionsWithWorkflow,
+  getBriefingActionGroups,
   getCanonicalActions,
+  getCriticalFlagHighlights,
   getMetricCounts,
   getMorningProgress
 } from "@/lib/workflow/selectors";
@@ -170,6 +172,84 @@ describe("canonical selectors and filters", () => {
     expect(securityActions[0].flags).toHaveLength(1);
   });
 
+  it("collapses duplicate canonical actions for the same current issue", () => {
+    const source = analysis();
+    source.executiveItems.push(
+      item({
+        id: "payment-delegate-copy",
+        kind: "delegate",
+        section: "delegated",
+        title: "Coordinate rollback or hotfix response with Engineering",
+        summary: "Engineering should coordinate the rollback or hotfix path after the CEO decision.",
+        priority: "high",
+        sourceMessageIds: ["16"],
+        threadId: "api",
+        ownerRole: "Engineering",
+        deadlineText: "Within next hour",
+        decisionQuestion: null,
+        options: null,
+        draftedResponse: {
+          type: "internal_handoff",
+          to: "Engineering",
+          subject: null,
+          body: "Prepare the selected rollback or hotfix path."
+        }
+      }),
+      item({
+        id: "payment-decision-copy",
+        title: "Choose rollback or hotfix for live checkout failures",
+        summary: "Engineering needs the same rollback-or-hotfix decision.",
+        priority: "high",
+        sourceMessageIds: ["16"],
+        threadId: "api",
+        decisionQuestion: "Should Engineering roll back the partial migration or push a hotfix?"
+      })
+    );
+
+    const actions = getCanonicalActions(source);
+    const paymentActions = actions.filter((action) => action.sourceMessageIds.includes("16"));
+
+    expect(paymentActions).toHaveLength(1);
+    expect(paymentActions[0]).toMatchObject({
+      kind: "decide",
+      priority: "urgent"
+    });
+  });
+
+  it("deduplicates critical flag highlights by underlying issue", () => {
+    const source = analysis();
+    source.executiveItems.push(
+      item({
+        id: "security-followup",
+        kind: "delegate",
+        section: "urgent",
+        title: "Secure CEO account",
+        summary: "Security should verify the account through official systems.",
+        priority: "urgent",
+        sourceMessageIds: ["4"],
+        ownerRole: "Security",
+        decisionQuestion: null,
+        options: null
+      })
+    );
+    source.flags.push({
+      id: "security-flag-copy",
+      severity: "critical",
+      category: "security",
+      title: "Suspicious login email may be phishing",
+      description: "The message urges clicking a verification link and uses a suspicious sender domain.",
+      sourceMessageIds: ["4"],
+      status: "active",
+      recommendedAction: "Verify through official systems."
+    });
+
+    const highlights = getCriticalFlagHighlights(getActionsWithWorkflow(getCanonicalActions(source), {}));
+
+    expect(highlights).toHaveLength(1);
+    expect(highlights[0].flag.sourceMessageIds).toEqual(["4"]);
+    expect(highlights[0].flag.category).toBe("security");
+  });
+
   it("excludes handled executive items from the active action queue", () => {
     const actions = getCanonicalActions(analysis());
 
@@ -200,6 +280,22 @@ describe("canonical selectors and filters", () => {
     workflow = markStatus(workflow, decisionKey, "open");
     withWorkflow = getActionsWithWorkflow(actions, workflow);
     expect(getMorningProgress(withWorkflow).remaining).toBe(actions.length);
+  });
+
+  it("groups briefing actions by CEO attention, waiting, and handled state", () => {
+    const actions = getCanonicalActions(analysis());
+    const decisionKey = actions.find((action) => action.kind === "decide")?.key;
+    const securityKey = actions.find((action) => action.kind === "delegate")?.key;
+    if (!decisionKey || !securityKey) {
+      throw new Error("expected decision and security actions");
+    }
+
+    const workflow = markStatus(markStatus({}, decisionKey, "completed"), securityKey, "waiting");
+    const groups = getBriefingActionGroups(getActionsWithWorkflow(actions, workflow));
+
+    expect(groups.attention).toHaveLength(0);
+    expect(groups.waiting.map((action) => action.key)).toEqual([securityKey]);
+    expect(groups.handled.map((action) => action.key)).toEqual([decisionKey]);
   });
 
   it("derives active counts from workflow state", () => {

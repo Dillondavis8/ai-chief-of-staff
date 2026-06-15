@@ -174,5 +174,12 @@ export type AnalysisResponseMetadata = {
   promptVersion: string;
   processedMessageCount: number;
   processingMs: number;
+  analysisMode: "single_pass" | "threaded" | "deterministic";
+  modelCallCount: number;
+  plannedThreadCount: number | null;
+  partialAnalysisFallbackCount: number;
+  analysisFallbackReason: string | null;
+  analysisWarnings: string[];
+  usedAnalysisFallback: boolean;
   usedBriefingFallback: boolean;
 };

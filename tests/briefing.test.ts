@@ -62,6 +62,53 @@ describe("fallback briefing", () => {
     expect(briefingWordCount(briefing)).toBeLessThanOrEqual(250);
   });
 
+  it("does not repeat an active flag already represented by an executive action", () => {
+    const source = analysis();
+    source.executiveItems.push(
+      item({
+        id: "security-action",
+        kind: "delegate",
+        section: "urgent",
+        title: "Verify suspicious security email",
+        summary: "Security should verify the suspicious email through official systems.",
+        priority: "urgent",
+        sourceMessageIds: ["4"],
+        ownerRole: "Security",
+        decisionQuestion: null
+      })
+    );
+
+    const briefing = buildFallbackBriefing(source);
+
+    expect(briefing.urgent.some((entry) => entry.sourceMessageIds.includes("4"))).toBe(true);
+    expect(briefing.flags.some((entry) => entry.sourceMessageIds.includes("4"))).toBe(false);
+  });
+
+  it("keeps only the highest-priority same-source item in the brief", () => {
+    const source = analysis();
+    source.executiveItems = [
+      item({
+        id: "hybrid-policy",
+        title: "Address hybrid policy concerns",
+        priority: "medium",
+        sourceMessageIds: ["13"],
+        decisionQuestion: "How should the CEO address engineering concerns about the hybrid policy?"
+      }),
+      item({
+        id: "benefits-approval",
+        title: "Approve benefits package",
+        priority: "high",
+        sourceMessageIds: ["13"],
+        decisionQuestion: "Should the CEO approve the new benefits package?"
+      })
+    ];
+    source.flags = [];
+
+    const briefing = buildFallbackBriefing(source);
+
+    expect(briefing.decisions.map((entry) => entry.title)).toEqual(["Approve benefits package"]);
+  });
+
   it("removes inline message source markers from rendered briefing text", () => {
     const briefing: DailyBriefing = {
       title: "Daily brief [Msg16]",

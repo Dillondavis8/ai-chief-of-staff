@@ -48,8 +48,6 @@ export function deriveMetrics(analysis: AnalysisResult, messageCount: number) {
     activeDecisions: activeItems.filter((item) => item.kind === "decide").length,
     delegatedActions: activeItems.filter((item) => item.kind === "delegate").length,
     activeFlags: analysis.flags.filter((flag) => flag.status === "active").length,
-    inactiveMessages: analysis.messageAnalyses.filter((message) =>
-      ["superseded", "resolved"].includes(message.lifecycleStatus)
-    ).length
+    ignoredMessages: analysis.messageAnalyses.filter((message) => message.primaryCategory === "ignore").length
   };
 }

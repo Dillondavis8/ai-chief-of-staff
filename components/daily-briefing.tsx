@@ -3,7 +3,6 @@
 import { ClipboardCopy } from "lucide-react";
 import type { BriefingItem, DailyBriefing as DailyBriefingType } from "@/lib/ai/schemas";
 import { briefingDisplayText, splitBriefingBody } from "@/lib/ai/briefing-display";
-import { briefingWordCount } from "@/lib/ai/briefing";
 import { PriorityBadge } from "./status-badge";
 import { SourceBadges } from "./source-badges";
 
@@ -41,7 +40,6 @@ function BriefingRow({ item }: { item: BriefingItem }) {
 }
 
 export function DailyBriefing({ briefing }: DailyBriefingProps) {
-  const wordCount = briefingWordCount(briefing);
   const title = briefingDisplayText(briefing.title);
   const overview = briefingDisplayText(briefing.overview);
 
@@ -76,9 +74,6 @@ export function DailyBriefing({ briefing }: DailyBriefingProps) {
           {overview ? <p className="mt-2 text-sm leading-6 text-stone-600">{overview}</p> : null}
         </div>
         <div className="flex flex-wrap items-center gap-2">
-          <span className="rounded-full border border-line bg-paper px-3 py-1 text-xs font-semibold text-stone-700">
-            {wordCount} words
-          </span>
           <button
             type="button"
             onClick={() => void navigator.clipboard.writeText(copyText)}

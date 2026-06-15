@@ -21,10 +21,14 @@ The supplied fixture is normalized into [data/messages.json](data/messages.json)
 
 ```bash
 OPENAI_API_KEY=sk-your-server-side-key
-OPENAI_MODEL=gpt-4.1-mini
+OPENAI_MODEL=gpt-5.4-mini
+AOS_THREADED_ANALYSIS_MIN_MESSAGES=30
+AOS_THREAD_ANALYSIS_CONCURRENCY=3
 ```
 
 `OPENAI_API_KEY` is used only in the server route. If it is missing, `POST /api/analyze` returns a clear `503` configuration error and the UI shows that a server-side key is required.
+
+Large batches automatically switch from one-shot analysis to a threaded pipeline at `AOS_THREADED_ANALYSIS_MIN_MESSAGES` messages. The threaded path first builds a full-batch thread plan, then analyzes bounded thread slices with `AOS_THREAD_ANALYSIS_CONCURRENCY` parallel calls before merging back into the same audit-ready schema.
 
 ## From Analysis Report To Workflow
 
@@ -72,18 +76,19 @@ The app uses URL-driven views so browser back/forward and metric-card links are 
 - `Action Center`: canonical operational queue with filters, search, sorting, workflow controls, and detail drawer
 - `Audit Trail`: original messages and thread timelines with AI category, lifecycle, rationale, drafts, flags, and source links
 
-Metric cards navigate directly into filtered views, such as active decisions, delegations, flags, and superseded/resolved audit records.
+Metric cards navigate directly into the assignment deliverables: Briefing, Decide, Delegate, Flags, and Ignore.
 
 ## Analysis Pipeline
 
 1. Load the default sample dataset or upload a new `.json` file.
 2. Client-side validation checks array shape, unique IDs, parseable timestamps, sender/body presence, payload size, and unknown channel normalization.
 3. `POST /api/analyze` normalizes and chronologically sorts messages.
-4. The server makes a structured-output analysis call for the complete batch.
-5. Application validation checks message coverage, ID references, thread/item uniqueness, active delegate/decision fields, suspicious sender reply safety, and obvious unsupported financial/candidate details.
-6. If validation fails, the server makes one repair call and validates again.
-7. A second structured-output call creates the daily briefing from validated current-state analysis only.
-8. If the briefing stays over 250 words after one rewrite, a deterministic fallback preserves source IDs.
+4. Small batches use one compact structured-output analysis call for the complete batch.
+5. Larger batches use staged analysis: one full-batch thread plan, then smaller structured-output calls per planned thread.
+6. Application validation checks message coverage, ID references, thread/item uniqueness, active delegate/decision fields, suspicious sender reply safety, and obvious unsupported financial/candidate details.
+7. Invalid model output gets one repair attempt at the same scope. In threaded mode, an individual failed thread can fall back to thread-scoped deterministic analysis without discarding successful model analysis for other threads.
+8. Application code expands the validated current state into safe drafts, grounded decision options, and a deduplicated daily briefing.
+9. The briefing is deterministic from validated analysis so it preserves source IDs, avoids obsolete history, and stays within the read-time budget.
 
 ## Workflow Behavior
 
@@ -134,7 +139,33 @@ No messages are sent, no assignees are notified, and no external communication A
 
 ## Demo Assumptions
 
-The app uses a small generic context in [lib/demo/company-context.ts](lib/demo/company-context.ts). It assumes the CEO decides fundraising matters, executive hiring, benefits approval, material commercial exceptions, and major risk tradeoffs. Routine execution is delegated to functional owners such as Security, Engineering, Finance, Sales, People, Legal, and Operations.
+The app uses a small generic context in [lib/demo/company-context.ts](lib/demo/company-context.ts). These assumptions are intentionally documented here rather than displayed in the product UI, so the demo interface stays focused on the briefing, action queue, and audit trail.
+
+Executive preferences:
+
+- Surface decisions requiring executive authority.
+- Escalate security, financial, legal, reputational, major customer, and material operational risks.
+- Prefer concise drafts.
+- Keep personal communications separate from company matters.
+
+Decision policy:
+
+- The CEO generally decides fundraising matters, executive hiring, benefits approval, material commercial exceptions, and major risk tradeoffs.
+- Routine execution, investigation, and status updates should normally be delegated to the appropriate function.
+- No communication may be sent without human approval.
+
+Functional owners available to the analysis:
+
+- Executive Assistant
+- Chief Operating Officer
+- Engineering
+- Security
+- Finance
+- Sales
+- People
+- Product
+- Marketing
+- Legal
 
 A production deployment would replace this with the client’s org chart, responsibility matrix, approval thresholds, and CEO preferences.
 
@@ -193,10 +224,17 @@ Success:
   "analysis": {},
   "briefing": {},
   "metadata": {
-    "model": "gpt-4.1-mini",
-    "promptVersion": "aos-v1",
+    "model": "gpt-5.4-mini",
+    "promptVersion": "aos-v4",
     "processedMessageCount": 20,
     "processingMs": 12345,
+    "analysisMode": "single_pass",
+    "modelCallCount": 1,
+    "plannedThreadCount": null,
+    "partialAnalysisFallbackCount": 0,
+    "analysisFallbackReason": null,
+    "analysisWarnings": [],
+    "usedAnalysisFallback": false,
     "usedBriefingFallback": false
   }
 }
@@ -208,7 +246,7 @@ Errors use sanitized statuses: `400` malformed input, `413` excessive payload, `
 
 1. Open Briefing.
 2. Show morning progress.
-3. Click the Active CEO Decisions metric.
+3. Click the Decide metric.
 4. Open the API incident.
 5. Inspect the thread timeline.
 6. Record a decision without sending anything.
@@ -227,7 +265,11 @@ A production deployment would add durable user-scoped persistence, user identity
 ## Engineering Notes
 
 - App Router, TypeScript, Tailwind CSS, Zod, and the official OpenAI TypeScript SDK.
-- The model never receives one message at a time; the full normalized batch is analyzed together.
+- Small batches are analyzed together with a compact structured-output contract constrained to uploaded message IDs.
+- Larger batches are analyzed hierarchically: full-batch thread planning first, then per-thread structured analysis with the full thread map included as deduplication context.
+- Threaded analysis namespaces per-thread model IDs before merging so thread, action, and flag references stay stable and unique.
+- The daily briefing is generated from validated current-state actions and standalone flags instead of asking the model to summarize the same facts again.
+- If one threaded slice times out or still returns unusable structured output, only that slice falls back to thread-scoped deterministic analysis. If the whole provider path fails, the app falls back to conservative deterministic analysis so the CEO still gets triage, flags, and a briefing.
 - Message content is treated as untrusted data in the prompt and never rendered as arbitrary HTML.
 - Metrics are derived from canonical workflow selectors, not trusted from model totals.
 - Source badges link briefing items, action cards, flags, threads, and audit records back to original message IDs.

@@ -29,14 +29,60 @@ function numberOrFallback(value: unknown, fallback: number) {
   return typeof value === "number" && Number.isFinite(value) ? value : fallback;
 }
 
+function stringArrayOrFallback(value: unknown) {
+  return Array.isArray(value) ? value.filter((item): item is string => typeof item === "string") : [];
+}
+
+function parseAnalysisMode(value: unknown): AnalysisResponseMetadata["analysisMode"] {
+  return value === "threaded" || value === "deterministic" ? value : "single_pass";
+}
+
+function parseMetadata(value: unknown, messageCount: number): AnalysisResponseMetadata {
+  const metadata = isRecord(value) ? value : {};
+  const usedAnalysisFallback = Boolean(metadata.usedAnalysisFallback);
+  return {
+    model: stringOrFallback(metadata.model, "unknown"),
+    promptVersion: stringOrFallback(metadata.promptVersion, "unknown"),
+    processedMessageCount: numberOrFallback(metadata.processedMessageCount, messageCount),
+    processingMs: numberOrFallback(metadata.processingMs, 0),
+    analysisMode: parseAnalysisMode(metadata.analysisMode),
+    modelCallCount: numberOrFallback(metadata.modelCallCount, usedAnalysisFallback ? 0 : 1),
+    plannedThreadCount: typeof metadata.plannedThreadCount === "number" ? metadata.plannedThreadCount : null,
+    partialAnalysisFallbackCount: numberOrFallback(metadata.partialAnalysisFallbackCount, 0),
+    analysisFallbackReason: typeof metadata.analysisFallbackReason === "string" ? metadata.analysisFallbackReason : null,
+    analysisWarnings: stringArrayOrFallback(metadata.analysisWarnings),
+    usedAnalysisFallback,
+    usedBriefingFallback: Boolean(metadata.usedBriefingFallback)
+  };
+}
+
 export function createRunId(filename: string, createdAt: string, messageCount: number) {
   const normalized = filename.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
   return `${createdAt.replace(/[^0-9]/g, "").slice(0, 14)}-${messageCount}-${normalized || "dataset"}`;
 }
 
-export function createRunLabel(filename: string, createdAt: string, messageCount: number) {
+export function formatRunFilename(filename: string) {
+  const withoutExtension = filename.replace(/\.[^/.]+$/, "");
+  const readable = withoutExtension
+    .replace(/[_-]+/g, " ")
+    .replace(/\s*\((?:copy|\d+)\)\s*/gi, " ")
+    .replace(/\bcopy\b$/i, "")
+    .replace(/\s+/g, " ")
+    .trim();
+
+  if (!readable) {
+    return "Uploaded dataset";
+  }
+
+  return readable
+    .split(" ")
+    .map((word) => (/^[A-Z0-9]+$/.test(word) ? word : `${word.charAt(0).toUpperCase()}${word.slice(1).toLowerCase()}`))
+    .join(" ");
+}
+
+export function formatRunTimestamp(createdAt: string) {
   const date = new Date(createdAt);
-  const dateText = Number.isNaN(date.getTime())
+  return Number.isNaN(date.getTime())
     ? createdAt
     : new Intl.DateTimeFormat("en", {
         month: "short",
@@ -44,8 +90,10 @@ export function createRunLabel(filename: string, createdAt: string, messageCount
         hour: "numeric",
         minute: "2-digit"
       }).format(date);
+}
 
-  return `${filename} · ${messageCount} messages · ${dateText}`;
+export function createRunLabel(filename: string, createdAt: string, messageCount: number) {
+  return `${formatRunFilename(filename)} · ${messageCount} messages · ${formatRunTimestamp(createdAt)}`;
 }
 
 export function createStoredRun(args: {
@@ -93,7 +141,7 @@ export function parseStoredRun(value: unknown): StoredAnalysisRun | null {
     dataset: "dataset" in value ? value.dataset : [],
     analysis: value.analysis as AnalysisResult,
     briefing: value.briefing as DailyBriefing,
-    metadata: value.metadata as AnalysisResponseMetadata
+    metadata: parseMetadata(value.metadata, messageCount)
   };
 }
 

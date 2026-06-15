@@ -1,54 +1,66 @@
-import { AlertCircle, ArrowRight, CheckCircle2, ClipboardList, GitPullRequestDraft, MessageSquare } from "lucide-react";
+import { AlertCircle, ArrowRight, CheckCircle2, ClipboardList, GitPullRequestDraft, Newspaper } from "lucide-react";
 
 type Metrics = {
   messagesProcessed: number;
   activeDecisions: number;
   delegatedActions: number;
   activeFlags: number;
-  inactiveMessages: number;
+  ignoredMessages: number;
 };
 
 const items: Array<{
-  key: keyof Metrics;
+  key: "briefing" | keyof Omit<Metrics, "messagesProcessed">;
   label: string;
-  icon: typeof MessageSquare;
+  icon: typeof Newspaper;
   target: string;
   aria: string;
+  value: (metrics: Metrics) => string | number;
+  detail: (metrics: Metrics) => string;
 }> = [
   {
-    key: "messagesProcessed",
-    label: "Messages processed",
-    icon: MessageSquare,
-    target: "?view=audit",
-    aria: "Open Audit Trail with all messages"
+    key: "briefing",
+    label: "Briefing",
+    icon: Newspaper,
+    target: "?view=briefing",
+    aria: "Open Daily Briefing",
+    value: () => "<2 min",
+    detail: (metrics) => `${metrics.messagesProcessed} messages processed`
   },
   {
     key: "activeDecisions",
-    label: "Active CEO decisions",
+    label: "Decide",
     icon: ClipboardList,
     target: "?view=actions&type=decide&status=active",
-    aria: "Open Action Center filtered to active CEO decisions"
+    aria: "Open Action Center filtered to CEO decisions",
+    value: (metrics) => metrics.activeDecisions,
+    detail: () => "CEO decisions"
   },
   {
     key: "delegatedActions",
-    label: "Delegated actions",
+    label: "Delegate",
     icon: GitPullRequestDraft,
     target: "?view=actions&type=delegate&status=active",
-    aria: "Open Action Center filtered to unresolved delegations"
+    aria: "Open Action Center filtered to delegations",
+    value: (metrics) => metrics.delegatedActions,
+    detail: () => "Owner handoffs"
   },
   {
     key: "activeFlags",
-    label: "Active flags",
+    label: "Flags",
     icon: AlertCircle,
     target: "?view=actions&type=flag&status=active&flagged=true",
-    aria: "Open Action Center filtered to active flagged actions"
+    aria: "Open Action Center filtered to flags",
+    value: (metrics) => metrics.activeFlags,
+    detail: () => "Key risks"
   },
   {
-    key: "inactiveMessages",
-    label: "Superseded or resolved",
+    key: "ignoredMessages",
+    label: "Ignore",
     icon: CheckCircle2,
-    target: "?view=audit&lifecycle=superseded%2Cresolved",
-    aria: "Open Audit Trail filtered to superseded or resolved messages"
+    target: "?view=audit&category=ignore",
+    aria: "Open Audit Trail filtered to ignored messages",
+    value: (metrics) => metrics.ignoredMessages,
+    detail: () => "No action needed"
   }
 ];
 
@@ -78,7 +90,8 @@ export function SummaryMetrics({
                 <ArrowRight className="h-3.5 w-3.5 opacity-0 transition group-hover:opacity-100" aria-hidden="true" />
               </div>
             </div>
-            <p className="mt-3 text-3xl font-semibold text-ink">{metrics[item.key]}</p>
+            <p className="mt-3 text-3xl font-semibold text-ink">{item.value(metrics)}</p>
+            <p className="mt-1 text-xs font-medium text-stone-500">{item.detail(metrics)}</p>
           </button>
         );
       })}
